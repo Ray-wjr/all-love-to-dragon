@@ -230,7 +230,7 @@
 
   <div class="phase-hint" id="phase-hint"></div>
 
-  <audio id="bg-music" src="Again.mp3" preload="auto"></audio>
+  <audio id="bg-music" src="Again.mp3" preload="auto" playsinline webkit-playsinline x-webkit-airplay="allow"></audio>
 
   <button class="replay-btn" id="replay-btn">
     <span class="btn-emoji">🔄</span>再看一次
@@ -261,45 +261,77 @@
   const phaseHint = document.getElementById('phase-hint');
   const bgMusic = document.getElementById('bg-music');
 
-  // ============ Web Audio API 音量增强 ============
-  let audioCtx = null;
-  let gainNode = null;
-  let sourceNode = null;
-
-  function initAudioContext() {
-    if (audioCtx) return;
-    try {
-      audioCtx = new (window.AudioContext || window.webkitAudioContext)();
-      gainNode = audioCtx.createGain();
-      // +6dB 增益补偿，确保移动端音量足够
-      gainNode.gain.value = 1.8;
-      sourceNode = audioCtx.createMediaElementSource(bgMusic);
-      sourceNode.connect(gainNode);
-      gainNode.connect(audioCtx.destination);
-    } catch (e) {
-      // Web Audio API 不可用时回退到原生播放
-      audioCtx = null;
-      bgMusic.volume = 1.0;
-    }
-  }
+  // ============ 音频控制（纯 audio 元素，不用 Web Audio API，避免 iOS 断音） ============
+  let audioKeepAliveTimer = null;
+  let audioStartTime = 0; // 记录音乐开始时的 timestamp，用于断音后恢复位置
 
   function playMusic() {
-    bgMusic.currentTime = 0;
     bgMusic.volume = 1.0;
-    // 确保 AudioContext 在用户手势中恢复（iOS 需要）
-    if (audioCtx && audioCtx.state === 'suspended') {
-      audioCtx.resume();
-    }
+    bgMusic.currentTime = 0;
+    audioStartTime = Date.now();
     const promise = bgMusic.play();
     if (promise) {
-      promise.catch(err => console.log('音乐播放失败:', err));
+      promise.catch(err => {
+        // 极少情况下 play() 失败，静默忽略，保活定时器会重试
+        console.log('音乐播放失败，将在保活检查中重试:', err);
+      });
     }
+    startAudioKeepAlive();
   }
 
   function stopMusic() {
+    stopAudioKeepAlive();
     bgMusic.pause();
     bgMusic.currentTime = 0;
   }
+
+  function startAudioKeepAlive() {
+    stopAudioKeepAlive();
+    // 每 4 秒检查一次音乐是否还在播放，断了就从断点恢复
+    audioKeepAliveTimer = setInterval(() => {
+      if (!animationRunning) return;
+      if (bgMusic.paused || bgMusic.ended) {
+        // 估算断点位置（基于时间偏移）
+        const elapsed = (Date.now() - audioStartTime) / 1000;
+        const resumePos = elapsed % 60; // 60s 音乐循环
+        bgMusic.currentTime = resumePos;
+        bgMusic.volume = 1.0;
+        bgMusic.play().catch(() => {});
+      }
+    }, 4000);
+  }
+
+  function stopAudioKeepAlive() {
+    if (audioKeepAliveTimer) {
+      clearInterval(audioKeepAliveTimer);
+      audioKeepAliveTimer = null;
+    }
+  }
+
+  // 页面切回前台时恢复音乐
+  document.addEventListener('visibilitychange', () => {
+    if (!document.hidden && animationRunning && bgMusic.paused) {
+      const elapsed = (Date.now() - audioStartTime) / 1000;
+      bgMusic.currentTime = elapsed % 60;
+      bgMusic.volume = 1.0;
+      bgMusic.play().catch(() => {});
+    }
+  });
+
+  // 音频因系统中断（如来电）而暂停时，尝试恢复
+  bgMusic.addEventListener('pause', () => {
+    if (animationRunning && !cancelFlag) {
+      // 短暂延迟后尝试恢复（避免与 stopMusic 冲突）
+      setTimeout(() => {
+        if (animationRunning && !cancelFlag && bgMusic.paused) {
+          const elapsed = (Date.now() - audioStartTime) / 1000;
+          bgMusic.currentTime = elapsed % 60;
+          bgMusic.volume = 1.0;
+          bgMusic.play().catch(() => {});
+        }
+      }, 500);
+    }
+  });
 
   // ============ 响应式卡片尺寸 ============
   function getCardParams(w, h) {
@@ -644,6 +676,7 @@
         hideReplayBtn();
         animationRunning = false;
         cancelFlag = false;
+        playMusic();
         runAnimation();
       }, 300);
     } else {
@@ -654,7 +687,6 @@
   // ============ 事件监听 ============
   replayBtn.addEventListener('click', (e) => {
     e.preventDefault();
-    initAudioContext();
     playMusic();
     cancelAndReplay();
   });
@@ -662,7 +694,6 @@
   document.addEventListener('keydown', (e) => {
     if (e.code === 'Space' || e.key === ' ') {
       e.preventDefault();
-      initAudioContext();
       playMusic();
       cancelAndReplay();
     }
