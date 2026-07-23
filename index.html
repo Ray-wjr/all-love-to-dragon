@@ -262,61 +262,49 @@
   const bgMusic = document.getElementById('bg-music');
 
   // ============ 音频控制 ============
-  // 核心策略：用 loop 属性防止音频自然结束，避免依赖定时器恢复（iOS 禁止非用户手势的 play()）
-  let audioLoaded = false;
-  let audioEverStarted = false;
+  // iOS 关键：在用户手势回调里同步创建+resume AudioContext，解锁整个音频子系统
+  // 不需要把音频路由到 AudioContext，创建它只是为了"唤醒" iOS
 
-  // 页面加载时立即预加载音频
   bgMusic.volume = 1.0;
   bgMusic.load();
 
-  bgMusic.addEventListener('canplaythrough', () => {
-    audioLoaded = true;
-  }, { once: true });
-
-  // 在用户首次触摸屏幕时解锁音频（iOS 关键步骤）
-  function unlockAudio() {
-    if (audioEverStarted) return;
-    // 短暂播放一段静音来"解锁" iOS 的音频子系统
-    bgMusic.volume = 0.001;
-    bgMusic.currentTime = 0;
-    const p = bgMusic.play();
-    if (p) {
-      p.then(() => {
-        bgMusic.pause();
-        bgMusic.currentTime = 0;
-        bgMusic.volume = 1.0;
-        audioEverStarted = true;
-      }).catch(() => {});
-    }
-  }
-
-  // 首次用户触摸/点击页面任意位置时解锁音频
-  document.addEventListener('touchstart', unlockAudio, { once: true, passive: true });
-  document.addEventListener('click', unlockAudio, { once: true });
-
   function playMusic() {
-    bgMusic.volume = 1.0;
-    bgMusic.currentTime = 0;
+    // 第1步：在用户手势里同步解锁 iOS 音频（创建空 AudioContext 并 resume）
+    try {
+      const unlockCtx = new (window.AudioContext || window.webkitAudioContext)();
+      if (unlockCtx.state === 'suspended') {
+        unlockCtx.resume();
+      }
+      // 播放一个极短的静音缓冲，确保音频管线彻底激活
+      const buf = unlockCtx.createBuffer(1, 1, 22050);
+      const src = unlockCtx.createBufferSource();
+      src.buffer = buf;
+      src.connect(unlockCtx.destination);
+      src.start(0);
+      src.stop(unlockCtx.currentTime + 0.001);
+    } catch (e) { /* 忽略，非关键 */ }
 
-    // 确保音频数据就绪
-    if (bgMusic.readyState < HTMLMediaElement.HAVE_ENOUGH_DATA) {
+    // 第2步：确保音频数据已缓冲
+    if (bgMusic.readyState < HTMLMediaElement.HAVE_FUTURE_DATA) {
       bgMusic.load();
     }
+
+    // 第3步：播放
+    bgMusic.volume = 1.0;
+    bgMusic.currentTime = 0;
 
     const promise = bgMusic.play();
     if (promise) {
       promise.catch(() => {
-        // 移动端可能在音频未完全加载时拒绝播放，等加载完成后重试
-        if (!audioLoaded) {
-          bgMusic.addEventListener('canplaythrough', () => {
-            audioLoaded = true;
-            bgMusic.volume = 1.0;
-            bgMusic.currentTime = 0;
-            bgMusic.play().catch(() => {});
-          }, { once: true });
-          bgMusic.load();
-        }
+        // 音频文件还没缓冲完，等加载完成后重播
+        const retry = () => {
+          bgMusic.removeEventListener('canplaythrough', retry);
+          bgMusic.volume = 1.0;
+          bgMusic.currentTime = 0;
+          bgMusic.play().catch(() => {});
+        };
+        bgMusic.addEventListener('canplaythrough', retry, { once: true });
+        bgMusic.load();
       });
     }
   }
