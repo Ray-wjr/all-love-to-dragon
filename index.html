@@ -230,7 +230,7 @@
 
   <div class="phase-hint" id="phase-hint"></div>
 
-  <audio id="bg-music" src="Again.mp3" preload="auto" loop playsinline webkit-playsinline x-webkit-airplay="allow"></audio>
+  <audio id="bg-music" src="Again.mp3" preload="auto" playsinline webkit-playsinline x-webkit-airplay="allow"></audio>
 
   <button class="replay-btn" id="replay-btn">
     <span class="btn-emoji">🔄</span>再看一次
@@ -262,41 +262,47 @@
   const bgMusic = document.getElementById('bg-music');
 
   // ============ 音频控制 ============
-  // iOS 关键：在用户手势回调里同步创建+resume AudioContext，解锁整个音频子系统
-  // 不需要把音频路由到 AudioContext，创建它只是为了"唤醒" iOS
+  // 策略：一个持久的 AudioContext（含极低音量振荡器）保持 iOS 音频会话存活 60s
+  // 音乐不循环，动画自适应在 60s 准时结束，和音乐一起收尾
 
+  let persistentCtx = null;
   bgMusic.volume = 1.0;
   bgMusic.load();
 
-  function playMusic() {
-    // 第1步：在用户手势里同步解锁 iOS 音频（创建空 AudioContext 并 resume）
+  function ensureAudioSession() {
+    if (persistentCtx && persistentCtx.state !== 'closed') {
+      if (persistentCtx.state === 'suspended') persistentCtx.resume();
+      return;
+    }
     try {
-      const unlockCtx = new (window.AudioContext || window.webkitAudioContext)();
-      if (unlockCtx.state === 'suspended') {
-        unlockCtx.resume();
-      }
-      // 播放一个极短的静音缓冲，确保音频管线彻底激活
-      const buf = unlockCtx.createBuffer(1, 1, 22050);
-      const src = unlockCtx.createBufferSource();
-      src.buffer = buf;
-      src.connect(unlockCtx.destination);
-      src.start(0);
-      src.stop(unlockCtx.currentTime + 0.001);
-    } catch (e) { /* 忽略，非关键 */ }
+      persistentCtx = new (window.AudioContext || window.webkitAudioContext)();
+      // 持续播放一个听不到的振荡器，防止 iOS 在动画中途暂停音频会话
+      const osc = persistentCtx.createOscillator();
+      const gain = persistentCtx.createGain();
+      gain.gain.value = 0.0001;
+      osc.frequency.value = 20;
+      osc.connect(gain);
+      gain.connect(persistentCtx.destination);
+      osc.start();
+    } catch (e) { /* 回退到纯 audio 元素 */ }
+  }
 
-    // 第2步：确保音频数据已缓冲
+  function playMusic() {
+    // ① 在用户手势里同步解锁 iOS 音频 + 建立持久会话
+    ensureAudioSession();
+
+    // ② 确保缓冲
     if (bgMusic.readyState < HTMLMediaElement.HAVE_FUTURE_DATA) {
       bgMusic.load();
     }
 
-    // 第3步：播放
+    // ③ 播放
     bgMusic.volume = 1.0;
     bgMusic.currentTime = 0;
 
     const promise = bgMusic.play();
     if (promise) {
       promise.catch(() => {
-        // 音频文件还没缓冲完，等加载完成后重播
         const retry = () => {
           bgMusic.removeEventListener('canplaythrough', retry);
           bgMusic.volume = 1.0;
@@ -312,6 +318,11 @@
   function stopMusic() {
     bgMusic.pause();
     bgMusic.currentTime = 0;
+    // 关闭持久音频上下文
+    if (persistentCtx && persistentCtx.state !== 'closed') {
+      try { persistentCtx.close(); } catch (e) {}
+      persistentCtx = null;
+    }
   }
 
   // ============ 响应式卡片尺寸 ============
@@ -540,6 +551,8 @@
 
     const w = window.innerWidth;
     const h = window.innerHeight;
+    const ANIM_START = performance.now();
+    const MUSIC_DURATION = 60000; // 60s，和 Again.mp3 一致
 
     // 根据屏幕确定卡片尺寸
     currentCard = getCardParams(w, h);
@@ -551,7 +564,7 @@
 
     const positions = getHeartPositions(TOTAL_CARDS, w, h, currentCard.cardW, currentCard.cardH);
 
-    // ====== 阶段 1: 心形逐个出现 (10s) ======
+    // ====== 阶段 1: 心形逐个出现 ======
     showHint('✨ 爱心正在生成...');
     for (let i = 0; i < TOTAL_CARDS; i++) {
       if (cancelFlag) break;
@@ -567,14 +580,14 @@
 
     if (cancelFlag) { finish(); return; }
 
-    // ====== 阶段 2: 心形保持 + 呼吸动画 (8s) ======
+    // ====== 阶段 2: 心形保持 + 呼吸动画 ======
     hideHint();
     heartCards.forEach(c => c.classList.add('breathing'));
     await sleep(8000);
 
     if (cancelFlag) { finish(); return; }
 
-    // ====== 阶段 3a: 心形卡片散开 (~2s) ======
+    // ====== 阶段 3a: 心形卡片散开 ======
     showHint('💫 散落中...');
     heartCards.forEach(c => c.classList.remove('breathing'));
 
@@ -594,7 +607,7 @@
 
     if (cancelFlag) { finish(); return; }
 
-    // ====== 阶段 3b: 额外随机卡片出现 (~2.5s) ======
+    // ====== 阶段 3b: 额外随机卡片出现 ======
     showHint('🌸 到处都是...');
     const extraCount = Math.floor(w / 150) * Math.floor(h / 40) + 50;
     for (let i = 0; i < Math.min(extraCount, 120); i++) {
@@ -610,13 +623,16 @@
 
     if (cancelFlag) { finish(); return; }
 
-    // ====== 阶段 3c: 停留 (~26s) ======
+    // ====== 阶段 3c: 停留，动态计算时间使总时长接近 60s ======
     showHint('💝 要一直幸福哦 ~');
-    await sleep(26000);
+    const elapsed = performance.now() - ANIM_START;
+    // 预留至少 8s 给消失阶段
+    const pauseTime = Math.max(2000, MUSIC_DURATION - elapsed - 8000);
+    await sleep(pauseTime);
 
     if (cancelFlag) { finish(); return; }
 
-    // ====== 阶段 3d: 逐个消失 (~10s) ======
+    // ====== 阶段 3d: 逐个消失，自适应剩余时间 ======
     hideHint();
     const allCards = [...heartCards, ...randomCards];
     for (let i = allCards.length - 1; i > 0; i--) {
@@ -624,8 +640,8 @@
       [allCards[i], allCards[j]] = [allCards[j], allCards[i]];
     }
 
-    const totalTime = 10000;
-    const interval = totalTime / allCards.length;
+    const remaining = Math.max(2000, MUSIC_DURATION - (performance.now() - ANIM_START));
+    const interval = remaining / allCards.length;
 
     for (const card of allCards) {
       if (cancelFlag) break;
