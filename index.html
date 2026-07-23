@@ -230,7 +230,7 @@
 
   <div class="phase-hint" id="phase-hint"></div>
 
-  <audio id="bg-music" src="Again.mp3" preload="auto" playsinline webkit-playsinline x-webkit-airplay="allow"></audio>
+  <audio id="bg-music" src="Again.mp3" preload="auto" loop playsinline webkit-playsinline x-webkit-airplay="allow"></audio>
 
   <button class="replay-btn" id="replay-btn">
     <span class="btn-emoji">🔄</span>再看一次
@@ -261,77 +261,70 @@
   const phaseHint = document.getElementById('phase-hint');
   const bgMusic = document.getElementById('bg-music');
 
-  // ============ 音频控制（纯 audio 元素，不用 Web Audio API，避免 iOS 断音） ============
-  let audioKeepAliveTimer = null;
-  let audioStartTime = 0; // 记录音乐开始时的 timestamp，用于断音后恢复位置
+  // ============ 音频控制 ============
+  // 核心策略：用 loop 属性防止音频自然结束，避免依赖定时器恢复（iOS 禁止非用户手势的 play()）
+  let audioLoaded = false;
+  let audioEverStarted = false;
+
+  // 页面加载时立即预加载音频
+  bgMusic.volume = 1.0;
+  bgMusic.load();
+
+  bgMusic.addEventListener('canplaythrough', () => {
+    audioLoaded = true;
+  }, { once: true });
+
+  // 在用户首次触摸屏幕时解锁音频（iOS 关键步骤）
+  function unlockAudio() {
+    if (audioEverStarted) return;
+    // 短暂播放一段静音来"解锁" iOS 的音频子系统
+    bgMusic.volume = 0.001;
+    bgMusic.currentTime = 0;
+    const p = bgMusic.play();
+    if (p) {
+      p.then(() => {
+        bgMusic.pause();
+        bgMusic.currentTime = 0;
+        bgMusic.volume = 1.0;
+        audioEverStarted = true;
+      }).catch(() => {});
+    }
+  }
+
+  // 首次用户触摸/点击页面任意位置时解锁音频
+  document.addEventListener('touchstart', unlockAudio, { once: true, passive: true });
+  document.addEventListener('click', unlockAudio, { once: true });
 
   function playMusic() {
     bgMusic.volume = 1.0;
     bgMusic.currentTime = 0;
-    audioStartTime = Date.now();
+
+    // 确保音频数据就绪
+    if (bgMusic.readyState < HTMLMediaElement.HAVE_ENOUGH_DATA) {
+      bgMusic.load();
+    }
+
     const promise = bgMusic.play();
     if (promise) {
-      promise.catch(err => {
-        // 极少情况下 play() 失败，静默忽略，保活定时器会重试
-        console.log('音乐播放失败，将在保活检查中重试:', err);
+      promise.catch(() => {
+        // 移动端可能在音频未完全加载时拒绝播放，等加载完成后重试
+        if (!audioLoaded) {
+          bgMusic.addEventListener('canplaythrough', () => {
+            audioLoaded = true;
+            bgMusic.volume = 1.0;
+            bgMusic.currentTime = 0;
+            bgMusic.play().catch(() => {});
+          }, { once: true });
+          bgMusic.load();
+        }
       });
     }
-    startAudioKeepAlive();
   }
 
   function stopMusic() {
-    stopAudioKeepAlive();
     bgMusic.pause();
     bgMusic.currentTime = 0;
   }
-
-  function startAudioKeepAlive() {
-    stopAudioKeepAlive();
-    // 每 4 秒检查一次音乐是否还在播放，断了就从断点恢复
-    audioKeepAliveTimer = setInterval(() => {
-      if (!animationRunning) return;
-      if (bgMusic.paused || bgMusic.ended) {
-        // 估算断点位置（基于时间偏移）
-        const elapsed = (Date.now() - audioStartTime) / 1000;
-        const resumePos = elapsed % 60; // 60s 音乐循环
-        bgMusic.currentTime = resumePos;
-        bgMusic.volume = 1.0;
-        bgMusic.play().catch(() => {});
-      }
-    }, 4000);
-  }
-
-  function stopAudioKeepAlive() {
-    if (audioKeepAliveTimer) {
-      clearInterval(audioKeepAliveTimer);
-      audioKeepAliveTimer = null;
-    }
-  }
-
-  // 页面切回前台时恢复音乐
-  document.addEventListener('visibilitychange', () => {
-    if (!document.hidden && animationRunning && bgMusic.paused) {
-      const elapsed = (Date.now() - audioStartTime) / 1000;
-      bgMusic.currentTime = elapsed % 60;
-      bgMusic.volume = 1.0;
-      bgMusic.play().catch(() => {});
-    }
-  });
-
-  // 音频因系统中断（如来电）而暂停时，尝试恢复
-  bgMusic.addEventListener('pause', () => {
-    if (animationRunning && !cancelFlag) {
-      // 短暂延迟后尝试恢复（避免与 stopMusic 冲突）
-      setTimeout(() => {
-        if (animationRunning && !cancelFlag && bgMusic.paused) {
-          const elapsed = (Date.now() - audioStartTime) / 1000;
-          bgMusic.currentTime = elapsed % 60;
-          bgMusic.volume = 1.0;
-          bgMusic.play().catch(() => {});
-        }
-      }, 500);
-    }
-  });
 
   // ============ 响应式卡片尺寸 ============
   function getCardParams(w, h) {
