@@ -5,11 +5,6 @@
 <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
 <title>💖 爱心提示</title>
 <style>
-  :root {
-    --card-w: 120px;
-    --card-h: 52px;
-  }
-
   * { margin: 0; padding: 0; box-sizing: border-box; }
 
   body {
@@ -34,7 +29,6 @@
     75% { background-position: 0% 100%; }
   }
 
-  /* 光晕装饰 */
   .glow {
     position: fixed;
     border-radius: 50%;
@@ -78,7 +72,6 @@
     50% { transform: translate(-50%, -50%) scale(1.3); }
   }
 
-  /* 卡片层 */
   #cards-layer {
     position: fixed;
     inset: 0;
@@ -88,19 +81,16 @@
 
   .card {
     position: absolute;
-    width: var(--card-w);
-    height: var(--card-h);
-    border-radius: 12px;
+    border-radius: 10px;
     display: flex;
     align-items: center;
     justify-content: center;
-    font-size: 15px;
     font-weight: 600;
     color: #333;
     letter-spacing: 0.5px;
     box-shadow:
-      0 4px 20px rgba(255, 107, 157, 0.3),
-      0 1px 4px rgba(0, 0, 0, 0.1),
+      0 3px 15px rgba(255, 107, 157, 0.28),
+      0 1px 3px rgba(0, 0, 0, 0.08),
       inset 0 1px 0 rgba(255, 255, 255, 0.5);
     border: 1.5px solid rgba(255, 255, 255, 0.45);
     opacity: 0;
@@ -137,7 +127,6 @@
     100% { opacity: 0; transform: scale(0.3) rotate(15deg); }
   }
 
-  /* 花瓣画布 */
   #petals-canvas {
     position: fixed;
     inset: 0;
@@ -145,10 +134,9 @@
     pointer-events: none;
   }
 
-  /* 标题 */
   .title-area {
     position: fixed;
-    top: 20px;
+    top: max(12px, env(safe-area-inset-top));
     left: 50%;
     transform: translateX(-50%);
     z-index: 10;
@@ -156,13 +144,13 @@
     text-align: center;
   }
   .title-text {
-    font-size: clamp(20px, 4vw, 28px);
+    font-size: clamp(18px, 4vw, 28px);
     color: rgba(255, 255, 255, 0.85);
     text-shadow: 0 0 30px rgba(255, 107, 157, 0.6);
     letter-spacing: 2px;
   }
   .title-emoji {
-    font-size: clamp(24px, 5vw, 36px);
+    font-size: clamp(22px, 5vw, 36px);
     animation: emojiBounce 1.5s ease-in-out infinite;
     display: inline-block;
   }
@@ -171,15 +159,14 @@
     50% { transform: translateY(-8px); }
   }
 
-  /* 重播按钮 */
   .replay-btn {
     position: fixed;
-    bottom: 30px;
+    bottom: max(24px, env(safe-area-inset-bottom, 24px));
     left: 50%;
     transform: translateX(-50%);
     z-index: 20;
-    padding: 14px 36px;
-    font-size: 17px;
+    padding: 13px 34px;
+    font-size: 16px;
     font-weight: 700;
     font-family: inherit;
     letter-spacing: 1px;
@@ -209,15 +196,14 @@
     margin-right: 6px;
   }
 
-  /* 阶段提示 */
   .phase-hint {
     position: fixed;
-    bottom: 100px;
+    bottom: 95px;
     left: 50%;
     transform: translateX(-50%);
     z-index: 10;
     pointer-events: none;
-    font-size: 14px;
+    font-size: 13px;
     color: rgba(255, 255, 255, 0.55);
     letter-spacing: 2px;
     opacity: 0;
@@ -230,30 +216,22 @@
 </head>
 <body>
 
-  <!-- 背景光晕 -->
   <div class="glow glow-1"></div>
   <div class="glow glow-2"></div>
   <div class="glow glow-3"></div>
 
-  <!-- 花瓣粒子 -->
   <canvas id="petals-canvas"></canvas>
-
-  <!-- 卡片容器 -->
   <div id="cards-layer"></div>
 
-  <!-- 标题 -->
   <div class="title-area">
     <span class="title-emoji">💖</span>
     <div class="title-text">小提示</div>
   </div>
 
-  <!-- 阶段提示 -->
   <div class="phase-hint" id="phase-hint"></div>
 
-  <!-- 背景音乐 -->
   <audio id="bg-music" src="Again.mp3" preload="auto"></audio>
 
-  <!-- 重播按钮 -->
   <button class="replay-btn" id="replay-btn">
     <span class="btn-emoji">🔄</span>再看一次
   </button>
@@ -269,18 +247,11 @@
   ];
 
   const COLORS = [
-    "#ffb3c6", // pink
-    "#b3d9ff", // lightblue
-    "#b3f0c6", // lightgreen
-    "#fff5ba", // lemonchiffon
-    "#ff6b9d", // hotpink
-    "#87ceeb", // skyblue
-    "#ffd1dc", // light pink
-    "#c4b5fd", // light purple
+    "#ffb3c6", "#b3d9ff", "#b3f0c6", "#fff5ba",
+    "#ff6b9d", "#87ceeb", "#ffd1dc", "#c4b5fd",
   ];
 
   const TOTAL_CARDS = 100;
-  const EXTRA_RANDOM_CARDS = 60;
 
   // ============ DOM 引用 ============
   const cardsLayer = document.getElementById('cards-layer');
@@ -290,11 +261,76 @@
   const phaseHint = document.getElementById('phase-hint');
   const bgMusic = document.getElementById('bg-music');
 
+  // ============ Web Audio API 音量增强 ============
+  let audioCtx = null;
+  let gainNode = null;
+  let sourceNode = null;
+
+  function initAudioContext() {
+    if (audioCtx) return;
+    try {
+      audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+      gainNode = audioCtx.createGain();
+      // +6dB 增益补偿，确保移动端音量足够
+      gainNode.gain.value = 1.8;
+      sourceNode = audioCtx.createMediaElementSource(bgMusic);
+      sourceNode.connect(gainNode);
+      gainNode.connect(audioCtx.destination);
+    } catch (e) {
+      // Web Audio API 不可用时回退到原生播放
+      audioCtx = null;
+      bgMusic.volume = 1.0;
+    }
+  }
+
+  function playMusic() {
+    bgMusic.currentTime = 0;
+    bgMusic.volume = 1.0;
+    // 确保 AudioContext 在用户手势中恢复（iOS 需要）
+    if (audioCtx && audioCtx.state === 'suspended') {
+      audioCtx.resume();
+    }
+    const promise = bgMusic.play();
+    if (promise) {
+      promise.catch(err => console.log('音乐播放失败:', err));
+    }
+  }
+
+  function stopMusic() {
+    bgMusic.pause();
+    bgMusic.currentTime = 0;
+  }
+
+  // ============ 响应式卡片尺寸 ============
+  function getCardParams(w, h) {
+    let cardW, cardH, fontSize, borderRadius;
+    if (w < 380) {
+      // 小屏手机 (iPhone SE 等)
+      cardW = 58; cardH = 28; fontSize = 10; borderRadius = 7;
+    } else if (w < 500) {
+      // 普通手机
+      cardW = 68; cardH = 32; fontSize = 11; borderRadius = 8;
+    } else if (w < 768) {
+      // 大屏手机 / 小平板
+      cardW = 88; cardH = 40; fontSize = 13; borderRadius = 9;
+    } else if (w < 1024) {
+      // 平板
+      cardW = 108; cardH = 47; fontSize = 14; borderRadius = 10;
+    } else {
+      // 桌面
+      cardW = 120; cardH = 52; fontSize = 15; borderRadius = 12;
+    }
+    return { cardW, cardH, fontSize, borderRadius };
+  }
+
   // ============ 状态 ============
-  let heartCards = [];     // 心形卡片元素
-  let randomCards = [];    // 随机散落卡片元素
+  let heartCards = [];
+  let randomCards = [];
   let animationRunning = false;
   let cancelFlag = false;
+
+  // 当前使用的卡片参数（runAnimation 时确定）
+  let currentCard = { cardW: 120, cardH: 52, fontSize: 15, borderRadius: 12 };
 
   // ============ 画布尺寸适配 ============
   function resizeCanvas() {
@@ -311,23 +347,32 @@
     return { x, y };
   }
 
-  function getHeartPositions(n) {
-    const w = window.innerWidth;
-    const h = window.innerHeight;
+  // 心形原始范围: x∈[-16,16], y∈[-17.5, 14.5]
+  const HEART_X_RANGE = 32;  // 16 - (-16)
+  const HEART_Y_RANGE = 32;  // 14.5 - (-17.5) ≈ 32
+
+  function getHeartPositions(n, w, h, cardW, cardH) {
     const positions = [];
-    const scaleX = Math.min(w / 600, h / 500) * 18;
-    const scaleY = scaleX;
+    const margin = 12;
+    const availW = w - cardW - margin * 2;
+    const availH = h - cardH - margin * 2;
+
+    // 缩放比例：让心形完整适配可用空间
+    const scale = Math.min(availW / HEART_X_RANGE, availH / HEART_Y_RANGE);
+
     const cx = w / 2;
-    const cy = h / 2 - 30;
+    const cy = h / 2 - cardH * 0.15; // 微调垂直居中
+    const halfCardW = cardW / 2;
+    const halfCardH = cardH / 2;
 
     for (let i = 0; i < n; i++) {
       const th = (i / n) * 2 * Math.PI;
       const { x, y } = heartPoint(th);
-      const sx = cx + x * scaleX - 60;  // 60 = card-w / 2
-      const sy = cy - y * scaleY - 26;   // 26 = card-h / 2
+      const sx = cx + x * scale - halfCardW;
+      const sy = cy - y * scale - halfCardH;
       positions.push({
-        x: Math.max(10, Math.min(sx, w - 130)),
-        y: Math.max(10, Math.min(sy, h - 62)),
+        x: Math.max(margin, Math.min(sx, w - cardW - margin)),
+        y: Math.max(margin, Math.min(sy, h - cardH - margin)),
       });
     }
     return positions;
@@ -340,6 +385,10 @@
     card.textContent = text;
     card.style.left = x + 'px';
     card.style.top = y + 'px';
+    card.style.width = currentCard.cardW + 'px';
+    card.style.height = currentCard.cardH + 'px';
+    card.style.fontSize = currentCard.fontSize + 'px';
+    card.style.borderRadius = currentCard.borderRadius + 'px';
     card.style.background = `linear-gradient(145deg, ${color} 0%, ${adjustColor(color, -15)} 100%)`;
     return card;
   }
@@ -373,8 +422,7 @@
         rotation: Math.random() * Math.PI * 2,
         rotSpeed: (Math.random() - 0.5) * 0.02,
         type: Math.random() < 0.3 ? 'heart' : 'petal',
-        // 花瓣形状用贝塞尔控制点偏移
-        hue: 330 + Math.random() * 40, // 粉紫色系
+        hue: 330 + Math.random() * 40,
       });
     }
   }
@@ -386,7 +434,6 @@
     ctx.globalAlpha = opacity * 0.7;
     ctx.fillStyle = `hsla(${hue}, 70%, 70%, ${opacity})`;
     ctx.beginPath();
-    // 简单花瓣形状
     ctx.ellipse(0, -size * 0.2, size * 0.35, size * 0.7, 0, 0, Math.PI * 2);
     ctx.fill();
     ctx.beginPath();
@@ -403,7 +450,6 @@
     ctx.fillStyle = `hsla(${hue}, 80%, 65%, ${opacity})`;
     const s = size * 0.08;
     ctx.beginPath();
-    // Mini heart using the parametric equation
     for (let i = 0; i <= 100; i++) {
       const t = (i / 100) * Math.PI * 2;
       const hx = 16 * Math.pow(Math.sin(t), 3) * s;
@@ -418,27 +464,23 @@
 
   function animatePetals() {
     ctx.clearRect(0, 0, petalsCanvas.width, petalsCanvas.height);
-
     for (const p of petals) {
       p.y += p.speed;
       p.wobble += p.wobbleSpeed;
       p.x += Math.sin(p.wobble) * 0.4;
       p.rotation += p.rotSpeed;
-
       if (p.y > petalsCanvas.height + 20) {
         p.y = -20;
         p.x = Math.random() * petalsCanvas.width;
       }
       if (p.x < -20) p.x = petalsCanvas.width + 20;
       if (p.x > petalsCanvas.width + 20) p.x = -20;
-
       if (p.type === 'heart') {
         drawHeartShape(p.x, p.y, p.size, p.rotation, p.opacity, p.hue);
       } else {
         drawPetalShape(p.x, p.y, p.size, p.rotation, p.opacity, p.hue);
       }
     }
-
     if (!cancelFlag) {
       requestAnimationFrame(animatePetals);
     }
@@ -483,15 +525,18 @@
     initPetals();
     resizeCanvas();
 
-    // 启动花瓣动画（如果还没跑）
+    const w = window.innerWidth;
+    const h = window.innerHeight;
+
+    // 根据屏幕确定卡片尺寸
+    currentCard = getCardParams(w, h);
+
     if (!window._petalsRunning) {
       window._petalsRunning = true;
       animatePetals();
     }
 
-    const w = window.innerWidth;
-    const h = window.innerHeight;
-    const positions = getHeartPositions(TOTAL_CARDS);
+    const positions = getHeartPositions(TOTAL_CARDS, w, h, currentCard.cardW, currentCard.cardH);
 
     // ====== 阶段 1: 心形逐个出现 (10s) ======
     showHint('✨ 爱心正在生成...');
@@ -503,11 +548,7 @@
       const card = createCard(tip, color, pos.x, pos.y);
       cardsLayer.appendChild(card);
       heartCards.push(card);
-
-      requestAnimationFrame(() => {
-        card.classList.add('visible');
-      });
-
+      requestAnimationFrame(() => card.classList.add('visible'));
       await sleep(100);
     }
 
@@ -524,10 +565,14 @@
     showHint('💫 散落中...');
     heartCards.forEach(c => c.classList.remove('breathing'));
 
+    const { cardW, cardH } = currentCard;
+    const maxX = w - cardW - 10;
+    const maxY = h - cardH - 10;
+
     for (const card of heartCards) {
       if (cancelFlag) break;
-      const nx = Math.random() * (w - 130);
-      const ny = Math.random() * (h - 62);
+      const nx = Math.random() * maxX;
+      const ny = Math.random() * maxY;
       card.style.transition = 'left 1.5s cubic-bezier(0.25, 0.46, 0.45, 0.94), top 1.5s cubic-bezier(0.25, 0.46, 0.45, 0.94)';
       card.style.left = nx + 'px';
       card.style.top = ny + 'px';
@@ -541,30 +586,24 @@
     const extraCount = Math.floor(w / 150) * Math.floor(h / 40) + 50;
     for (let i = 0; i < Math.min(extraCount, 120); i++) {
       if (cancelFlag) break;
-      const x = Math.random() * (w - 130);
-      const y = Math.random() * (h - 62);
-      const tip = rand(TIPS);
-      const color = rand(COLORS);
-      const card = createCard(tip, color, x, y);
+      const x = Math.random() * maxX;
+      const y = Math.random() * maxY;
+      const card = createCard(rand(TIPS), rand(COLORS), x, y);
       cardsLayer.appendChild(card);
       randomCards.push(card);
-
-      requestAnimationFrame(() => {
-        card.classList.add('visible');
-      });
-
+      requestAnimationFrame(() => card.classList.add('visible'));
       await sleep(25);
     }
 
     if (cancelFlag) { finish(); return; }
 
-    // ====== 阶段 3c: 所有卡片停留 (~26s，与音乐同步) ======
+    // ====== 阶段 3c: 停留 (~26s) ======
     showHint('💝 要一直幸福哦 ~');
     await sleep(26000);
 
     if (cancelFlag) { finish(); return; }
 
-    // ====== 阶段 3d: 所有卡片逐个消失 (~10s) ======
+    // ====== 阶段 3d: 逐个消失 (~10s) ======
     hideHint();
     const allCards = [...heartCards, ...randomCards];
     for (let i = allCards.length - 1; i > 0; i--) {
@@ -593,9 +632,7 @@
     hideHint();
     clearAllCards();
     showReplayBtn();
-    // 音乐播放完毕后自然停止
-    bgMusic.pause();
-    bgMusic.currentTime = 0;
+    stopMusic();
   }
 
   function cancelAndReplay() {
@@ -617,18 +654,16 @@
   // ============ 事件监听 ============
   replayBtn.addEventListener('click', (e) => {
     e.preventDefault();
-    // 在用户点击的同步上下文中启动音乐（满足浏览器自动播放策略）
-    bgMusic.currentTime = 0;
-    bgMusic.play().catch(err => console.log('音乐播放失败:', err));
+    initAudioContext();
+    playMusic();
     cancelAndReplay();
   });
 
-  // 空格键也可以重播
   document.addEventListener('keydown', (e) => {
     if (e.code === 'Space' || e.key === ' ') {
       e.preventDefault();
-      bgMusic.currentTime = 0;
-      bgMusic.play().catch(err => console.log('音乐播放失败:', err));
+      initAudioContext();
+      playMusic();
       cancelAndReplay();
     }
   });
@@ -638,11 +673,7 @@
   window._petalsRunning = true;
   animatePetals();
   showReplayBtn();
-
-  // 首次需要用户点击按钮来启动（这样浏览器才会允许播放音乐）
-  // 如果想自动播放（无音乐），取消下面这行的注释：
-  // setTimeout(() => runAnimation(), 500);
-
+  // 首次需用户点击按钮来触发音乐（浏览器自动播放策略）
 })();
 </script>
 </body>
