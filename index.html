@@ -99,17 +99,14 @@
     will-change: transform, opacity;
   }
 
-  /* visible 的静态属性 = cardPopIn 的最终帧，保证动画被替换时卡片不会闪回基态 */
+  /* visible 的静态属性 = cardPopIn 的最终帧，保证动画结束后卡片不闪回基态 */
   .card.visible {
     animation: cardPopIn 0.35s cubic-bezier(0.175, 0.885, 0.32, 1.275) forwards;
     opacity: 1;
     transform: scale(1) rotate(0deg);
   }
 
-  .card.breathing {
-    animation: cardBreathe 4s ease-in-out infinite;
-  }
-
+  /* 呼吸效果改用 Web Animations API（JS 驱动），不再替换 CSS animation，彻底消除移动端闪屏 */
   .card.fading-out {
     animation: cardFadeOut 1s ease-in forwards;
   }
@@ -117,11 +114,6 @@
   @keyframes cardPopIn {
     0% { opacity: 0; transform: scale(0) rotate(-15deg); }
     100% { opacity: 1; transform: scale(1) rotate(0deg); }
-  }
-
-  @keyframes cardBreathe {
-    0%, 100% { opacity: 1; transform: translateY(0) scale(1); }
-    50% { opacity: 1; transform: translateY(-5px) scale(1.04); }
   }
 
   @keyframes cardFadeOut {
@@ -513,12 +505,39 @@
     }
   }
 
+  // ============ 呼吸动画（Web Animations API，独立于 CSS animation，不互相替换） ============
+  function addBreathing(card) {
+    if (card._breathAnim) return;
+    card._breathAnim = card.animate([
+      { transform: 'translateY(0px) scale(1)', offset: 0 },
+      { transform: 'translateY(-5px) scale(1.04)', offset: 0.5 },
+      { transform: 'translateY(0px) scale(1)', offset: 1 },
+    ], {
+      duration: 4000,
+      iterations: Infinity,
+      easing: 'ease-in-out',
+    });
+  }
+
+  function removeBreathing(card) {
+    if (card._breathAnim) {
+      card._breathAnim.cancel();
+      card._breathAnim = null;
+    }
+  }
+
+  function removeAllBreathing(cards) {
+    cards.forEach(c => removeBreathing(c));
+  }
+
   // ============ 主流程 ============
   function sleep(ms) {
     return new Promise(resolve => setTimeout(resolve, ms));
   }
 
   function clearAllCards() {
+    removeAllBreathing(heartCards);
+    removeAllBreathing(randomCards);
     cardsLayer.innerHTML = '';
     heartCards = [];
     randomCards = [];
@@ -583,11 +602,15 @@
 
     if (cancelFlag) { finish(); return; }
 
-    // ====== 阶段 2: 心形保持 + 呼吸动画 — 延长停留，平滑过渡 ======
-    // 呼吸动画直接叠加上去，不隐藏提示，不打断视觉
+    // ====== 阶段 2: 心形保持 + 呼吸动画 ======
+    // 渲染刷新缓冲：确保移动端最后几张卡片的 350ms popIn 动画已完成
+    await sleep(500);
+    await new Promise(r => requestAnimationFrame(() => requestAnimationFrame(r)));
+
     showHint('💖');
-    heartCards.forEach(c => c.classList.add('breathing'));
-    await sleep(15000);
+    // Web Animations API：呼吸效果独立运行，不触碰 CSS animation 属性
+    heartCards.forEach(c => addBreathing(c));
+    await sleep(14500); // 15000 - 500（缓冲补偿）
 
     if (cancelFlag) { finish(); return; }
 
@@ -624,8 +647,8 @@
       card.style.top = Math.max(5, Math.min(ny, maxY)) + 'px';
       await sleep(60);
     }
-    // 散开后取消呼吸（卡片已经在移动，呼吸的微浮动不再需要）
-    heartCards.forEach(c => c.classList.remove('breathing'));
+    // 散开后取消呼吸（卡片已经在移动，呼吸微浮动不再需要）
+    removeAllBreathing(heartCards);
 
     if (cancelFlag) { finish(); return; }
 
