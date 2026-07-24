@@ -99,8 +99,11 @@
     will-change: transform, opacity;
   }
 
+  /* visible 的静态属性 = cardPopIn 的最终帧，保证动画被替换时卡片不会闪回基态 */
   .card.visible {
     animation: cardPopIn 0.35s cubic-bezier(0.175, 0.885, 0.32, 1.275) forwards;
+    opacity: 1;
+    transform: scale(1) rotate(0deg);
   }
 
   .card.breathing {
@@ -117,8 +120,8 @@
   }
 
   @keyframes cardBreathe {
-    0%, 100% { transform: translateY(0) scale(1); }
-    50% { transform: translateY(-5px) scale(1.04); }
+    0%, 100% { opacity: 1; transform: translateY(0) scale(1); }
+    50% { opacity: 1; transform: translateY(-5px) scale(1.04); }
   }
 
   @keyframes cardFadeOut {
@@ -575,40 +578,59 @@
       cardsLayer.appendChild(card);
       heartCards.push(card);
       requestAnimationFrame(() => card.classList.add('visible'));
-      await sleep(100);
+      await sleep(80);
     }
 
     if (cancelFlag) { finish(); return; }
 
-    // ====== 阶段 2: 心形保持 + 呼吸动画 ======
-    hideHint();
+    // ====== 阶段 2: 心形保持 + 呼吸动画 — 延长停留，平滑过渡 ======
+    // 呼吸动画直接叠加上去，不隐藏提示，不打断视觉
+    showHint('💖');
     heartCards.forEach(c => c.classList.add('breathing'));
-    await sleep(8000);
+    await sleep(15000);
 
     if (cancelFlag) { finish(); return; }
 
-    // ====== 阶段 3a: 心形卡片散开 ======
-    showHint('💫 散落中...');
-    heartCards.forEach(c => c.classList.remove('breathing'));
-
+    // ====== 阶段 3a: 心形卡片向外缓缓散开（呼吸动画保留，叠加漂移） ======
+    showHint('💫 缓缓散开...');
     const { cardW, cardH } = currentCard;
     const maxX = w - cardW - 10;
     const maxY = h - cardH - 10;
+    const cx = w / 2;
+    const cy = h / 2;
 
-    for (const card of heartCards) {
+    // 从外到内排序：边缘卡片先动 → 爱心从外向内"溶解"
+    const sortedCards = [...heartCards].sort((a, b) => {
+      const ax = parseFloat(a.style.left) + cardW / 2;
+      const ay = parseFloat(a.style.top) + cardH / 2;
+      const bx = parseFloat(b.style.left) + cardW / 2;
+      const by = parseFloat(b.style.top) + cardH / 2;
+      return Math.hypot(bx - cx, by - cy) - Math.hypot(ax - cx, ay - cy);
+    });
+
+    for (const card of sortedCards) {
       if (cancelFlag) break;
-      const nx = Math.random() * maxX;
-      const ny = Math.random() * maxY;
-      card.style.transition = 'left 1.5s cubic-bezier(0.25, 0.46, 0.45, 0.94), top 1.5s cubic-bezier(0.25, 0.46, 0.45, 0.94)';
-      card.style.left = nx + 'px';
-      card.style.top = ny + 'px';
-      await sleep(15);
+      const cardCx = parseFloat(card.style.left) + cardW / 2;
+      const cardCy = parseFloat(card.style.top) + cardH / 2;
+      // 从爱心中心向外扩散 + 随机偏移
+      const dx = cardCx - cx;
+      const dy = cardCy - cy;
+      const dist = Math.hypot(dx, dy) || 1;
+      const drift = 80 + Math.random() * 250;
+      const nx = cardCx + (dx / dist) * drift + (Math.random() - 0.5) * 180 - cardW / 2;
+      const ny = cardCy + (dy / dist) * drift + (Math.random() - 0.5) * 180 - cardH / 2;
+      card.style.transition = 'left 4s cubic-bezier(0.33, 0, 0.18, 1), top 4s cubic-bezier(0.33, 0, 0.18, 1)';
+      card.style.left = Math.max(5, Math.min(nx, maxX)) + 'px';
+      card.style.top = Math.max(5, Math.min(ny, maxY)) + 'px';
+      await sleep(60);
     }
+    // 散开后取消呼吸（卡片已经在移动，呼吸的微浮动不再需要）
+    heartCards.forEach(c => c.classList.remove('breathing'));
 
     if (cancelFlag) { finish(); return; }
 
-    // ====== 阶段 3b: 额外随机卡片出现 ======
-    showHint('🌸 到处都是...');
+    // ====== 阶段 3b: 剩余空白区域随机补卡片 ======
+    showHint('🌸 到处都是小幸福...');
     const extraCount = Math.floor(w / 150) * Math.floor(h / 40) + 50;
     for (let i = 0; i < Math.min(extraCount, 120); i++) {
       if (cancelFlag) break;
@@ -618,21 +640,21 @@
       cardsLayer.appendChild(card);
       randomCards.push(card);
       requestAnimationFrame(() => card.classList.add('visible'));
-      await sleep(25);
+      await sleep(30);
     }
 
     if (cancelFlag) { finish(); return; }
 
-    // ====== 阶段 3c: 停留，动态计算时间使总时长接近 60s ======
+    // ====== 阶段 3c: 全场停留，动态计算使总时长接近 60s ======
     showHint('💝 要一直幸福哦 ~');
     const elapsed = performance.now() - ANIM_START;
-    // 预留至少 8s 给消失阶段
-    const pauseTime = Math.max(2000, MUSIC_DURATION - elapsed - 8000);
+    // 至少留 12s 给缓慢消失
+    const pauseTime = Math.max(2000, MUSIC_DURATION - elapsed - 12000);
     await sleep(pauseTime);
 
     if (cancelFlag) { finish(); return; }
 
-    // ====== 阶段 3d: 逐个消失，自适应剩余时间 ======
+    // ====== 阶段 3d: 逐个缓慢消失，自适应剩余时间 ======
     hideHint();
     const allCards = [...heartCards, ...randomCards];
     for (let i = allCards.length - 1; i > 0; i--) {
@@ -640,7 +662,7 @@
       [allCards[i], allCards[j]] = [allCards[j], allCards[i]];
     }
 
-    const remaining = Math.max(2000, MUSIC_DURATION - (performance.now() - ANIM_START));
+    const remaining = Math.max(8000, MUSIC_DURATION - (performance.now() - ANIM_START));
     const interval = remaining / allCards.length;
 
     for (const card of allCards) {
